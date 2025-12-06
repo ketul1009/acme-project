@@ -172,22 +172,62 @@
         $('#confirmDeleteBtn').click(function () {
             var btn = $(this);
             var url = btn.data('url');
-            btn.prop('disabled', true).text('Deleting...');
 
-            $.ajax({
-                url: url,
-                type: 'POST',
-                headers: { 'X-CSRFToken': '{{ csrf_token }}' },
-                success: function (response) {
-                    location.reload();
-                },
-                error: function () {
-                    alert('Failed to delete.');
-                    btn.prop('disabled', false).text('Delete');
-                }
-            });
+            // Check if this is a bulk delete
+            if (url.includes('delete-all')) {
+                btn.prop('disabled', true).text('Starting deletion...');
+
+                $.ajax({
+                    url: url,
+                    type: 'POST',
+                    headers: { 'X-CSRFToken': '{{ csrf_token }}' },
+                    success: function (response) {
+                        var taskId = response.task_id;
+                        trackDeleteProgress(taskId, btn);
+                    },
+                    error: function () {
+                        alert('Failed to start deletion.');
+                        btn.prop('disabled', false).text('Delete All');
+                    }
+                });
+            } else {
+                // Single delete
+                btn.prop('disabled', true).text('Deleting...');
+                $.ajax({
+                    url: url,
+                    type: 'POST',
+                    headers: { 'X-CSRFToken': '{{ csrf_token }}' },
+                    success: function (response) {
+                        location.reload();
+                    },
+                    error: function () {
+                        alert('Failed to delete.');
+                        btn.prop('disabled', false).text('Delete');
+                    }
+                });
+            }
         });
 
+        function trackDeleteProgress(taskId, btn) {
+            var interval = setInterval(function () {
+                $.ajax({
+                    url: "/products/delete/progress/" + taskId + "/",
+                    type: 'GET',
+                    success: function (data) {
+                        $('#deleteMessage').text(data.message + ' (' + data.progress + '%)');
+
+                        if (data.status === 'complete') {
+                            clearInterval(interval);
+                            location.reload();
+                        } else if (data.status === 'failed') {
+                            clearInterval(interval);
+                            alert('Deletion failed: ' + data.message);
+                            btn.prop('disabled', false).text('Delete All');
+                        }
+                    }
+                });
+            }, 1000);
+        }
         // Create Product
         $('#saveProductBtn').click(function () {
             var btn = $(this);

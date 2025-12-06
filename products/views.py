@@ -6,7 +6,7 @@ from django.core.files.storage import default_storage
 from django.core.cache import cache
 from django.conf import settings
 from .models import Product
-from .tasks import process_csv_import
+from .tasks import process_csv_import, delete_all_products
 
 class ProductListView(ListView):
     model = Product
@@ -54,8 +54,18 @@ class UploadProgressView(View):
 
 class BulkDeleteView(View):
     def post(self, request):
-        Product.objects.all().delete()
-        return JsonResponse({'message': 'All products deleted successfully'})
+        task = delete_all_products.delay()
+        return JsonResponse({'task_id': task.id})
+
+class DeleteProgressView(View):
+    def get(self, request, task_id):
+        cache_key = f'delete_progress_{task_id}'
+        progress_data = cache.get(cache_key)
+        
+        if not progress_data:
+            return JsonResponse({'status': 'pending', 'progress': 0, 'message': 'Initializing...'})
+        
+        return JsonResponse(progress_data)
 
 class ProductCreateView(View):
     def post(self, request):
