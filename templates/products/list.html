@@ -316,7 +316,7 @@
             data['is_active'] = statusCell.find('input').is(':checked');
 
             $.ajax({
-                url: "/products/update/" + id + "/",
+                url: "/products/" + id + "/update/",
                 type: 'POST',
                 data: JSON.stringify(data),
                 contentType: 'application/json',
@@ -325,7 +325,12 @@
                     location.reload();
                 },
                 error: function (xhr) {
-                    alert('Failed to update product: ' + (xhr.responseJSON ? xhr.responseJSON.error : xhr.statusText));
+                    if (xhr.status === 404) {
+                        alert('Product not found. The list might be stale. Reloading...');
+                        location.reload();
+                    } else {
+                        alert('Failed to update product: ' + (xhr.responseJSON ? xhr.responseJSON.error : xhr.statusText));
+                    }
                 }
             });
         });
