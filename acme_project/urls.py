@@ -20,7 +20,15 @@ from django.urls import path, include
 from products.views import SignUpView
 from django.contrib.auth import views as auth_views
 
+from django.shortcuts import redirect
+
+def home(request):
+    if request.user.is_authenticated:
+        return redirect('product_list')
+    return redirect('login')
+
 urlpatterns = [
+    path('', home, name='home'),
     path('admin/', admin.site.urls),
     path('products/', include('products.urls')),
     path('login/', auth_views.LoginView.as_view(), name='login'),
