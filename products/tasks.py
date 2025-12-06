@@ -9,7 +9,7 @@ from django.core.cache import cache
 from .models import Product
 
 @shared_task(bind=True)
-def process_csv_import(self, file_path):
+def process_csv_import(self, file_path, user_id):
     task_id = self.request.id
     cache_key = f'import_progress_{task_id}'
     
@@ -45,6 +45,7 @@ def process_csv_import(self, file_path):
                 sku = sku.lower()
                 
                 product = Product(
+                    user_id=user_id,
                     sku=sku,
                     name=name,
                     description=description,
@@ -68,7 +69,6 @@ def process_csv_import(self, file_path):
             if chunk_map:
                 _process_chunk(list(chunk_map.values()))
 
-
             cache.set(cache_key, {'status': 'complete', 'progress': 100, 'message': 'Import complete!'}, timeout=3600)
             
     except Exception as e:
@@ -80,16 +80,16 @@ def _process_chunk(chunk):
     Product.objects.bulk_create(
         chunk,
         update_conflicts=True,
-        unique_fields=['sku'],
+        unique_fields=['user', 'sku'],
         update_fields=['name', 'description', 'is_active', 'updated_at']
     )
 
 @shared_task(bind=True)
-def delete_all_products(self):
+def delete_all_products(self, user_id):
     task_id = self.request.id
     cache_key = f'delete_progress_{task_id}'
     
-    total_count = Product.objects.count()
+    total_count = Product.objects.filter(user_id=user_id).count()
     cache.set(cache_key, {'status': 'processing', 'progress': 0, 'message': f'Starting deletion of {total_count} products...'}, timeout=3600)
 
     try:
@@ -98,13 +98,7 @@ def delete_all_products(self):
         
         while True:
             # Get IDs to delete (using iterator to avoid loading all objects)
-            # We filter by pk to avoid offset performance issues, but since we are deleting, 
-            # just taking the first N is fine as the "first" changes after deletion.
-            # However, standard slice delete might be safer.
-            # Product.objects.all()[:batch_size] won't work with delete() directly in some DBs/Django versions 
-            # without fetching IDs.
-            
-            ids = list(Product.objects.values_list('pk', flat=True)[:batch_size])
+            ids = list(Product.objects.filter(user_id=user_id).values_list('pk', flat=True)[:batch_size])
             if not ids:
                 break
             
