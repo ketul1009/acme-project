@@ -35,6 +35,9 @@
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'webhook_list' %}">Webhooks</a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'operation_list' %}">Bulk Operations</a>
+                    </li>
                 </ul>
                 <ul class="navbar-nav">
                     {% if user.is_authenticated %}

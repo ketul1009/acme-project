@@ -12,15 +12,27 @@ from webhooks.tasks import send_webhook_notification
 import io
 from django.core.files.storage import default_storage
 
+from .models import Product, BulkOperation
+
+# ...
+
 @shared_task(bind=True)
-def process_csv_import(self, filename, user_id):
+def process_csv_import(self, operation_id):
     task_id = self.request.id
     cache_key = f'import_progress_{task_id}'
     
-    # Initialize progress
+    # Initialize progress in Cache
     cache.set(cache_key, {'status': 'processing', 'progress': 0, 'message': 'Starting import...'}, timeout=3600)
 
     try:
+        # Update DB Status -> Processing
+        operation = BulkOperation.objects.get(pk=operation_id)
+        operation.status = 'processing'
+        operation.save()
+        
+        user_id = operation.user_id
+        filename = operation.input_file.name
+
         file_size = default_storage.size(filename)
         
         with default_storage.open(filename, 'rb') as f:
@@ -66,7 +78,7 @@ def process_csv_import(self, filename, user_id):
                     _process_chunk(list(chunk_map.values()))
                     chunk_map = {}
                 
-                # Update progress periodically (every 1000 rows or when flushing)
+                # Update progress in Cache only
                 if rows_read % 1000 == 0:
                     progress = int((processed_bytes / file_size) * 100) if file_size > 0 else 0
                     cache.set(cache_key, {'status': 'processing', 'progress': progress, 'message': f'Processed {rows_read} records...'}, timeout=3600)
@@ -75,14 +87,23 @@ def process_csv_import(self, filename, user_id):
             if chunk_map:
                 _process_chunk(list(chunk_map.values()))
 
+            # Update Cache -> Complete
             cache.set(cache_key, {'status': 'complete', 'progress': 100, 'message': 'Import complete!'}, timeout=3600)
+            
+            # Update DB Status -> Completed
+            operation.status = 'completed'
+            operation.save()
             
             # Trigger Webhook
             send_webhook_notification.delay(user_id, 'import.completed', {'rows_processed': rows_read})
             
     except Exception as e:
-        cache.set(cache_key, {'status': 'failed', 'progress': 0, 'message': str(e)}, timeout=3600)
         logger.error(f"Error processing CSV import: {str(e)}")
+        cache.set(cache_key, {'status': 'failed', 'progress': 0, 'message': str(e)}, timeout=3600)
+        
+        if 'operation' in locals():
+            operation.status = 'failed'
+            operation.save()
 
 def _process_chunk(chunk):
     # Upsert logic using bulk_create with conflict handling
@@ -94,14 +115,21 @@ def _process_chunk(chunk):
     )
 
 @shared_task(bind=True)
-def delete_all_products(self, user_id):
+def delete_all_products(self, operation_id):
     task_id = self.request.id
     cache_key = f'delete_progress_{task_id}'
     
-    total_count = Product.objects.filter(user_id=user_id).count()
-    cache.set(cache_key, {'status': 'processing', 'progress': 0, 'message': f'Starting deletion of {total_count} products...'}, timeout=3600)
-
     try:
+        # Update DB Status -> Processing
+        operation = BulkOperation.objects.get(pk=operation_id)
+        operation.status = 'processing'
+        operation.save()
+        
+        user_id = operation.user_id
+        
+        total_count = Product.objects.filter(user_id=user_id).count()
+        cache.set(cache_key, {'status': 'processing', 'progress': 0, 'message': f'Starting deletion of {total_count} products...'}, timeout=3600)
+
         deleted_count = 0
         batch_size = 5000
         
@@ -115,9 +143,16 @@ def delete_all_products(self, user_id):
             deleted_count += len(ids)
             
             progress = int((deleted_count / total_count) * 100) if total_count > 0 else 100
+            
+            # Update Cache only
             cache.set(cache_key, {'status': 'processing', 'progress': progress, 'message': f'Deleted {deleted_count} of {total_count} products...'}, timeout=3600)
             
+        # Update Cache -> Complete
         cache.set(cache_key, {'status': 'complete', 'progress': 100, 'message': 'Deletion complete!'}, timeout=3600)
+        
+        # Update DB Status -> Completed
+        operation.status = 'completed'
+        operation.save()
         
         # Trigger Webhook
         send_webhook_notification.delay(user_id, 'bulk_delete.completed', {'deleted_count': deleted_count})
@@ -125,4 +160,8 @@ def delete_all_products(self, user_id):
     except Exception as e:
         logger.error(f"Error deleting products: {str(e)}")
         cache.set(cache_key, {'status': 'failed', 'progress': 0, 'message': str(e)}, timeout=3600)
+        
+        if 'operation' in locals():
+            operation.status = 'failed'
+            operation.save()
         raise e

@@ -5,7 +5,7 @@ from django.views.generic import ListView, TemplateView, View
 from django.core.files.storage import default_storage, FileSystemStorage
 from django.core.cache import cache
 from django.conf import settings
-from .models import Product
+from .models import Product, BulkOperation
 from .tasks import process_csv_import, delete_all_products
 
 from django.contrib.auth.mixins import LoginRequiredMixin
@@ -37,6 +37,13 @@ class ProductUploadView(LoginRequiredMixin, View):
         return render(request, 'products/upload.html')
 
     def post(self, request):
+        # Check for active operations
+        if BulkOperation.objects.filter(
+            user=request.user, 
+            status__in=['pending', 'processing']
+        ).exists():
+            return JsonResponse({'error': 'An operation is already in progress.'}, status=400)
+
         file = request.FILES.get('file')
         if not file:
             return JsonResponse({'error': 'No file uploaded'}, status=400)
@@ -44,13 +51,21 @@ class ProductUploadView(LoginRequiredMixin, View):
         if not file.name.endswith('.csv'):
             return JsonResponse({'error': 'Invalid file format. Please upload a CSV file.'}, status=400)
 
-        # Save file using default storage (S3 in prod, local in dev)
-        filename = default_storage.save(file.name, file)
+        # Create BulkOperation
+        operation = BulkOperation.objects.create(
+            user=request.user,
+            operation_type='import',
+            input_file=file,
+            status='pending'
+        )
         
-        # Trigger Celery task with filename
-        task = process_csv_import.delay(filename, request.user.id)
+        # Trigger Celery task with operation_id
+        task = process_csv_import.delay(operation.id)
         
-        return JsonResponse({'task_id': task.id})
+        operation.task_id = task.id
+        operation.save()
+        
+        return JsonResponse({'task_id': task.id, 'operation_id': operation.id})
 
 class UploadProgressView(LoginRequiredMixin, View):
     def get(self, request, task_id):
@@ -58,15 +73,55 @@ class UploadProgressView(LoginRequiredMixin, View):
         progress_data = cache.get(cache_key)
         
         if not progress_data:
-            # If task is pending or just started and not yet in cache
             return JsonResponse({'status': 'pending', 'progress': 0, 'message': 'Initializing...'})
         
         return JsonResponse(progress_data)
 
+class ActiveOperationView(LoginRequiredMixin, View):
+    def get(self, request):
+        operation = BulkOperation.objects.filter(
+            user=request.user,
+            status__in=['pending', 'processing']
+        ).first()
+        
+        if operation:
+            return JsonResponse({
+                'active': True,
+                'task_id': operation.task_id,
+                'operation_type': operation.operation_type,
+                'status': operation.status
+            })
+        return JsonResponse({'active': False})
+
+class OperationListView(LoginRequiredMixin, ListView):
+    model = BulkOperation
+    template_name = 'products/operation_list.html'
+    context_object_name = 'operations'
+    paginate_by = 10
+
+    def get_queryset(self):
+        return BulkOperation.objects.filter(user=self.request.user)
+
 class BulkDeleteView(LoginRequiredMixin, View):
     def post(self, request):
-        task = delete_all_products.delay(request.user.id)
-        return JsonResponse({'task_id': task.id})
+        if BulkOperation.objects.filter(
+            user=request.user, 
+            status__in=['pending', 'processing']
+        ).exists():
+            return JsonResponse({'error': 'An operation is already in progress.'}, status=400)
+
+        operation = BulkOperation.objects.create(
+            user=request.user,
+            operation_type='delete',
+            status='pending'
+        )
+
+        task = delete_all_products.delay(operation.id)
+        
+        operation.task_id = task.id
+        operation.save()
+
+        return JsonResponse({'task_id': task.id, 'operation_id': operation.id})
 
 class DeleteProgressView(LoginRequiredMixin, View):
     def get(self, request, task_id):

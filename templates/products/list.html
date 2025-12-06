@@ -149,10 +149,26 @@
 {% block extra_js %}
 <script>
     $(document).ready(function () {
+        // Check for active operation on load
+        $.ajax({
+            url: "{% url 'active_operation' %}",
+            type: 'GET',
+            success: function (data) {
+                if (data.active && data.operation_type === 'delete') {
+                    var btn = $('#bulkDeleteBtn');
+                    btn.prop('disabled', true).text('Deleting...');
+                    $('#deleteMessage').text('Resuming deletion...');
+                    var modal = new bootstrap.Modal(document.getElementById('deleteModal'));
+                    modal.show();
+                    trackDeleteProgress(data.task_id, btn);
+                }
+            }
+        });
+
         // Bulk Delete
         $('#bulkDeleteBtn').click(function () {
             $('#deleteMessage').text('Are you sure you want to delete ALL products? This action cannot be undone.');
-            $('#confirmDeleteBtn').data('url', "{% url 'bulk_delete' %}");
+            $('#confirmDeleteBtn').data('url', "{% url 'product_delete_all' %}");
             var modal = new bootstrap.Modal(document.getElementById('deleteModal'));
             modal.show();
         });
@@ -185,8 +201,8 @@
                         var taskId = response.task_id;
                         trackDeleteProgress(taskId, btn);
                     },
-                    error: function () {
-                        alert('Failed to start deletion.');
+                    error: function (xhr) {
+                        alert('Failed to start deletion: ' + (xhr.responseJSON ? xhr.responseJSON.error : xhr.statusText));
                         btn.prop('disabled', false).text('Delete All');
                     }
                 });
