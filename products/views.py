@@ -44,13 +44,11 @@ class ProductUploadView(LoginRequiredMixin, View):
         if not file.name.endswith('.csv'):
             return JsonResponse({'error': 'Invalid file format. Please upload a CSV file.'}, status=400)
 
-        # Save file temporarily
-        fs = FileSystemStorage()
-        filename = fs.save(file.name, file)
-        file_path = fs.path(filename)
+        # Save file using default storage (S3 in prod, local in dev)
+        filename = default_storage.save(file.name, file)
         
-        # Trigger Celery task with user_id
-        task = process_csv_import.delay(file_path, request.user.id)
+        # Trigger Celery task with filename
+        task = process_csv_import.delay(filename, request.user.id)
         
         return JsonResponse({'task_id': task.id})
 

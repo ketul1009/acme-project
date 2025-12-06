@@ -4,3 +4,8 @@ redis
 psycopg2-binary
 python-dotenv
 requests>=1.0
+gunicorn
+whitenoise
+dj-database-url
+django-storages
+boto3
