@@ -36,6 +36,19 @@
 {% block extra_js %}
 <script>
     $(document).ready(function () {
+        // Check for active operation on load
+        $.ajax({
+            url: "{% url 'active_operation' %}",
+            type: 'GET',
+            success: function (data) {
+                if (data.active && data.operation_type === 'import') {
+                    $('#uploadBtn').prop('disabled', true);
+                    $('#progressContainer').show();
+                    trackProgress(data.task_id);
+                }
+            }
+        });
+
         $('#uploadForm').on('submit', function (e) {
             e.preventDefault();
 
