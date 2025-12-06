@@ -23,6 +23,8 @@ def send_webhook_notification(user_id, event_type, payload):
         try:
             response = requests.post(webhook.url, json=data, timeout=5)
             response.raise_for_status()
-            logger.info(f"Webhook sent to {webhook.url} for event {event_type}")
+            logger.info(f"Webhook sent to {webhook.url} for event {event_type}. Status: {response.status_code}")
         except requests.RequestException as e:
             logger.error(f"Failed to send webhook to {webhook.url}: {str(e)}")
+            if hasattr(e, 'response') and e.response is not None:
+                 logger.error(f"Response content: {e.response.text}")
