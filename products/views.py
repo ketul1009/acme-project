@@ -13,6 +13,7 @@ from django.contrib.auth.forms import UserCreationForm
 from django.urls import reverse_lazy
 from django.views.generic import CreateView
 from webhooks.tasks import send_webhook_notification
+import json
 
 class SignUpView(CreateView):
     form_class = UserCreationForm
@@ -139,7 +140,6 @@ class ProductCreateView(LoginRequiredMixin, View):
         name = request.POST.get('name')
         description = request.POST.get('description')
         is_active = request.POST.get('is_active') == 'on'
-        print(request.user)
         if Product.objects.filter(sku=sku, user=request.user).exists():
             return JsonResponse({'error': 'SKU already exists'}, status=400)
 
@@ -160,8 +160,6 @@ class ProductUpdateView(LoginRequiredMixin, View):
         except Product.DoesNotExist:
             return JsonResponse({'error': 'Product not found'}, status=404)
 
-        # Handle JSON data for inline editing
-        import json
         data = json.loads(request.body)
         
         new_sku = data.get('sku', product.sku)

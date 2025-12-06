@@ -8,6 +8,10 @@ from django.utils.decorators import method_decorator
 from .models import Webhook, WebhookEndpoint, WebhookRequest
 from .forms import WebhookForm
 import json
+from django.http import StreamingHttpResponse
+import redis
+from django.conf import settings
+import logging
 
 class WebhookListView(LoginRequiredMixin, ListView):
     model = Webhook
@@ -68,14 +72,9 @@ class WebhookEndpointDetailView(LoginRequiredMixin, DetailView):
         context['products'] = Product.objects.filter(user=self.request.user).order_by('-updated_at')[:3]
         return context
 
-from django.http import StreamingHttpResponse
-import redis
-from django.conf import settings
-
 @method_decorator(csrf_exempt, name='dispatch')
 class WebhookReceiverView(View):
     def post(self, request, token):
-        import logging
         logger = logging.getLogger(__name__)
         logger.info(f"Received webhook request for token: {token}")
         
@@ -100,7 +99,6 @@ class WebhookReceiverView(View):
         try:
             r = redis.from_url(settings.REDIS_URL)
             # Create HTML fragment matching the Accordion structure
-            import json
             headers_pretty = json.dumps(webhook_request.headers, indent=2)
             query_pretty = json.dumps(webhook_request.query_params, indent=2)
             
@@ -140,7 +138,6 @@ class WebhookReceiverView(View):
 
 class WebhookStreamView(LoginRequiredMixin, View):
     def get(self, request, token):
-        print(f"DEBUG: Stream connected for token {token}")
         def event_stream():
             r = redis.from_url(settings.REDIS_URL)
             pubsub = r.pubsub()
