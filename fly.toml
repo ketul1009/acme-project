@@ -16,7 +16,7 @@ primary_region = 'bom'
   PORT = '8000'
 
 [processes]
-  app = 'gunicorn acme_project.wsgi:application --bind 0.0.0.0:8000'
+  app = 'gunicorn acme_project.wsgi:application --bind 0.0.0.0:8000 -k gevent'
   worker = 'celery -A acme_project worker --loglevel=info'
 
 [[services]]
