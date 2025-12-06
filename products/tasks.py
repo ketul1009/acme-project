@@ -83,3 +83,40 @@ def _process_chunk(chunk):
         unique_fields=['sku'],
         update_fields=['name', 'description', 'is_active', 'updated_at']
     )
+
+@shared_task(bind=True)
+def delete_all_products(self):
+    task_id = self.request.id
+    cache_key = f'delete_progress_{task_id}'
+    
+    total_count = Product.objects.count()
+    cache.set(cache_key, {'status': 'processing', 'progress': 0, 'message': f'Starting deletion of {total_count} products...'}, timeout=3600)
+
+    try:
+        deleted_count = 0
+        batch_size = 5000
+        
+        while True:
+            # Get IDs to delete (using iterator to avoid loading all objects)
+            # We filter by pk to avoid offset performance issues, but since we are deleting, 
+            # just taking the first N is fine as the "first" changes after deletion.
+            # However, standard slice delete might be safer.
+            # Product.objects.all()[:batch_size] won't work with delete() directly in some DBs/Django versions 
+            # without fetching IDs.
+            
+            ids = list(Product.objects.values_list('pk', flat=True)[:batch_size])
+            if not ids:
+                break
+            
+            Product.objects.filter(pk__in=ids).delete()
+            deleted_count += len(ids)
+            
+            progress = int((deleted_count / total_count) * 100) if total_count > 0 else 100
+            cache.set(cache_key, {'status': 'processing', 'progress': progress, 'message': f'Deleted {deleted_count} of {total_count} products...'}, timeout=3600)
+            
+        cache.set(cache_key, {'status': 'complete', 'progress': 100, 'message': 'Deletion complete!'}, timeout=3600)
+
+    except Exception as e:
+        logger.error(f"Error deleting products: {str(e)}")
+        cache.set(cache_key, {'status': 'failed', 'progress': 0, 'message': str(e)}, timeout=3600)
+        raise e
