@@ -8,6 +8,8 @@ logger = logging.getLogger(__name__)
 from django.core.cache import cache
 from .models import Product
 
+from webhooks.tasks import send_webhook_notification
+
 @shared_task(bind=True)
 def process_csv_import(self, file_path, user_id):
     task_id = self.request.id
@@ -71,6 +73,9 @@ def process_csv_import(self, file_path, user_id):
 
             cache.set(cache_key, {'status': 'complete', 'progress': 100, 'message': 'Import complete!'}, timeout=3600)
             
+            # Trigger Webhook
+            send_webhook_notification.delay(user_id, 'import.completed', {'rows_processed': rows_read})
+            
     except Exception as e:
         cache.set(cache_key, {'status': 'failed', 'progress': 0, 'message': str(e)}, timeout=3600)
         logger.error(f"Error processing CSV import: {str(e)}")
@@ -109,6 +114,9 @@ def delete_all_products(self, user_id):
             cache.set(cache_key, {'status': 'processing', 'progress': progress, 'message': f'Deleted {deleted_count} of {total_count} products...'}, timeout=3600)
             
         cache.set(cache_key, {'status': 'complete', 'progress': 100, 'message': 'Deletion complete!'}, timeout=3600)
+        
+        # Trigger Webhook
+        send_webhook_notification.delay(user_id, 'bulk_delete.completed', {'deleted_count': deleted_count})
 
     except Exception as e:
         logger.error(f"Error deleting products: {str(e)}")

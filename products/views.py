@@ -12,6 +12,7 @@ from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib.auth.forms import UserCreationForm
 from django.urls import reverse_lazy
 from django.views.generic import CreateView
+from webhooks.tasks import send_webhook_notification
 
 class SignUpView(CreateView):
     form_class = UserCreationForm
@@ -96,6 +97,7 @@ class ProductCreateView(LoginRequiredMixin, View):
             description=description,
             is_active=is_active
         )
+        send_webhook_notification.delay(request.user.id, 'product.created', {'sku': sku, 'name': name})
         return JsonResponse({'message': 'Product created successfully', 'id': product.id})
 
 class ProductUpdateView(LoginRequiredMixin, View):
@@ -120,13 +122,16 @@ class ProductUpdateView(LoginRequiredMixin, View):
         product.is_active = data.get('is_active', product.is_active)
         product.save()
         
+        send_webhook_notification.delay(request.user.id, 'product.updated', {'sku': product.sku, 'name': product.name})
         return JsonResponse({'message': 'Product updated successfully'})
 
 class ProductDeleteView(LoginRequiredMixin, View):
     def post(self, request, pk):
         try:
             product = Product.objects.get(pk=pk, user=request.user)
+            sku = product.sku
             product.delete()
+            send_webhook_notification.delay(request.user.id, 'product.deleted', {'sku': sku})
             return JsonResponse({'message': 'Product deleted successfully'})
         except Product.DoesNotExist:
             return JsonResponse({'error': 'Product not found'}, status=404)
