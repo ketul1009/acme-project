@@ -2,46 +2,58 @@ import os
 from django.shortcuts import render
 from django.http import JsonResponse
 from django.views.generic import ListView, TemplateView, View
-from django.core.files.storage import default_storage
+from django.core.files.storage import default_storage, FileSystemStorage
 from django.core.cache import cache
 from django.conf import settings
 from .models import Product
 from .tasks import process_csv_import, delete_all_products
 
-class ProductListView(ListView):
+from django.contrib.auth.mixins import LoginRequiredMixin
+from django.contrib.auth.forms import UserCreationForm
+from django.urls import reverse_lazy
+from django.views.generic import CreateView
+
+class SignUpView(CreateView):
+    form_class = UserCreationForm
+    success_url = reverse_lazy('login')
+    template_name = 'registration/signup.html'
+
+class ProductListView(LoginRequiredMixin, ListView):
     model = Product
     template_name = 'products/list.html'
     context_object_name = 'products'
-    paginate_by = 20
+    paginate_by = 10
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        queryset = Product.objects.filter(user=self.request.user).order_by('-created_at')
         query = self.request.GET.get('q')
         if query:
             queryset = queryset.filter(sku__icontains=query) | queryset.filter(name__icontains=query)
-        return queryset.order_by('-created_at')
+        return queryset
 
-class ProductUploadView(TemplateView):
-    template_name = 'products/upload.html'
+class ProductUploadView(LoginRequiredMixin, View):
+    def get(self, request):
+        return render(request, 'products/upload.html')
 
-    def post(self, request, *args, **kwargs):
-        if 'file' not in request.FILES:
+    def post(self, request):
+        file = request.FILES.get('file')
+        if not file:
             return JsonResponse({'error': 'No file uploaded'}, status=400)
         
-        file = request.FILES['file']
         if not file.name.endswith('.csv'):
-            return JsonResponse({'error': 'Invalid file type. Please upload a CSV.'}, status=400)
+            return JsonResponse({'error': 'Invalid file format. Please upload a CSV file.'}, status=400)
 
         # Save file temporarily
-        file_path = default_storage.save(f'tmp/{file.name}', file)
-        full_path = os.path.join(settings.MEDIA_ROOT, file_path)
-
-        # Trigger Celery task
-        task = process_csv_import.delay(full_path)
+        fs = FileSystemStorage()
+        filename = fs.save(file.name, file)
+        file_path = fs.path(filename)
+        
+        # Trigger Celery task with user_id
+        task = process_csv_import.delay(file_path, request.user.id)
         
         return JsonResponse({'task_id': task.id})
 
-class UploadProgressView(View):
+class UploadProgressView(LoginRequiredMixin, View):
     def get(self, request, task_id):
         cache_key = f'import_progress_{task_id}'
         progress_data = cache.get(cache_key)
@@ -52,12 +64,12 @@ class UploadProgressView(View):
         
         return JsonResponse(progress_data)
 
-class BulkDeleteView(View):
+class BulkDeleteView(LoginRequiredMixin, View):
     def post(self, request):
-        task = delete_all_products.delay()
+        task = delete_all_products.delay(request.user.id)
         return JsonResponse({'task_id': task.id})
 
-class DeleteProgressView(View):
+class DeleteProgressView(LoginRequiredMixin, View):
     def get(self, request, task_id):
         cache_key = f'delete_progress_{task_id}'
         progress_data = cache.get(cache_key)
@@ -67,17 +79,18 @@ class DeleteProgressView(View):
         
         return JsonResponse(progress_data)
 
-class ProductCreateView(View):
+class ProductCreateView(LoginRequiredMixin, View):
     def post(self, request):
         sku = request.POST.get('sku')
         name = request.POST.get('name')
         description = request.POST.get('description')
         is_active = request.POST.get('is_active') == 'on'
-
-        if Product.objects.filter(sku=sku).exists():
+        print(request.user)
+        if Product.objects.filter(sku=sku, user=request.user).exists():
             return JsonResponse({'error': 'SKU already exists'}, status=400)
 
         product = Product.objects.create(
+            user=request.user,
             sku=sku,
             name=name,
             description=description,
@@ -85,10 +98,10 @@ class ProductCreateView(View):
         )
         return JsonResponse({'message': 'Product created successfully', 'id': product.id})
 
-class ProductUpdateView(View):
+class ProductUpdateView(LoginRequiredMixin, View):
     def post(self, request, pk):
         try:
-            product = Product.objects.get(pk=pk)
+            product = Product.objects.get(pk=pk, user=request.user)
         except Product.DoesNotExist:
             return JsonResponse({'error': 'Product not found'}, status=404)
 
@@ -98,7 +111,7 @@ class ProductUpdateView(View):
         
         new_sku = data.get('sku', product.sku)
         if new_sku != product.sku:
-            if Product.objects.filter(sku=new_sku).exclude(pk=pk).exists():
+            if Product.objects.filter(sku=new_sku, user=request.user).exclude(pk=pk).exists():
                 return JsonResponse({'error': 'SKU already exists'}, status=400)
             product.sku = new_sku
 
@@ -109,10 +122,10 @@ class ProductUpdateView(View):
         
         return JsonResponse({'message': 'Product updated successfully'})
 
-class ProductDeleteView(View):
+class ProductDeleteView(LoginRequiredMixin, View):
     def post(self, request, pk):
         try:
-            product = Product.objects.get(pk=pk)
+            product = Product.objects.get(pk=pk, user=request.user)
             product.delete()
             return JsonResponse({'message': 'Product deleted successfully'})
         except Product.DoesNotExist:
