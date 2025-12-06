@@ -9,9 +9,11 @@ from django.core.cache import cache
 from .models import Product
 
 from webhooks.tasks import send_webhook_notification
+import io
+from django.core.files.storage import default_storage
 
 @shared_task(bind=True)
-def process_csv_import(self, file_path, user_id):
+def process_csv_import(self, filename, user_id):
     task_id = self.request.id
     cache_key = f'import_progress_{task_id}'
     
@@ -19,9 +21,11 @@ def process_csv_import(self, file_path, user_id):
     cache.set(cache_key, {'status': 'processing', 'progress': 0, 'message': 'Starting import...'}, timeout=3600)
 
     try:
-        file_size = os.path.getsize(file_path)
+        file_size = default_storage.size(filename)
         
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with default_storage.open(filename, 'rb') as f:
+            text_file = io.TextIOWrapper(f, encoding='utf-8')
+            
             # Wrapper to track bytes read
             processed_bytes = 0
             def progress_wrapper(file_obj):
@@ -30,7 +34,7 @@ def process_csv_import(self, file_path, user_id):
                     processed_bytes += len(line.encode('utf-8'))
                     yield line
 
-            reader = csv.DictReader(progress_wrapper(f))
+            reader = csv.DictReader(progress_wrapper(text_file))
             
             chunk_size = 5000
             chunk_map = {}
