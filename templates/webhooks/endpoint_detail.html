@@ -1,0 +1,63 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Webhook Tester</h2>
+        <a href="{% url 'webhook_list' %}" class="btn btn-outline-secondary">Back to Webhooks</a>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title">Your Test URL</h5>
+            <div class="input-group mb-3">
+                <input type="text" class="form-control" value="{{ test_url }}" id="testUrl" readonly>
+                <button class="btn btn-outline-primary" type="button" onclick="copyUrl()">Copy</button>
+            </div>
+            <p class="text-muted small">Use this URL when creating a webhook to test the payload.</p>
+        </div>
+    </div>
+
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h3>Received Requests</h3>
+        <a href="" class="btn btn-sm btn-outline-primary">Refresh</a>
+    </div>
+    <div class="accordion" id="requestsAccordion">
+        {% for request in endpoint.requests.all %}
+        <div class="accordion-item">
+            <h2 class="accordion-header" id="heading{{ request.id }}">
+                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
+                    data-bs-target="#collapse{{ request.id }}">
+                    <span class="badge bg-primary me-2">{{ request.method }}</span>
+                    {{ request.created_at|date:"Y-m-d H:i:s" }}
+                </button>
+            </h2>
+            <div id="collapse{{ request.id }}" class="accordion-collapse collapse" data-bs-parent="#requestsAccordion">
+                <div class="accordion-body">
+                    <h5>Headers</h5>
+                    <pre class="bg-light p-2 rounded"><code>{{ request.headers|pprint }}</code></pre>
+
+                    <h5>Query Params</h5>
+                    <pre class="bg-light p-2 rounded"><code>{{ request.query_params|pprint }}</code></pre>
+
+                    <h5>Body</h5>
+                    <pre class="bg-light p-2 rounded"><code>{{ request.body }}</code></pre>
+                </div>
+            </div>
+        </div>
+        {% empty %}
+        <div class="alert alert-info">No requests received yet. Waiting for incoming webhooks...</div>
+        {% endfor %}
+    </div>
+</div>
+
+<script>
+    function copyUrl() {
+        var copyText = document.getElementById("testUrl");
+        copyText.select();
+        copyText.setSelectionRange(0, 99999);
+        navigator.clipboard.writeText(copyText.value);
+        alert("Copied the URL: " + copyText.value);
+    }
+</script>
+{% endblock %}

@@ -3,8 +3,26 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2>Webhooks</h2>
-    <a href="{% url 'webhook_create' %}" class="btn btn-success">Add Webhook</a>
+    <div>
+        <button onclick="createTester()" class="btn btn-outline-info me-2">Webhook Tester</button>
+        <a href="{% url 'webhook_create' %}" class="btn btn-success">Add Webhook</a>
+    </div>
 </div>
+
+<script>
+    function createTester() {
+        fetch("{% url 'webhook_endpoint_create' %}", {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token }}'
+            }
+        })
+            .then(response => response.json())
+            .then(data => {
+                window.location.href = data.url;
+            });
+    }
+</script>
 
 <div class="table-responsive">
     <table class="table table-striped table-hover">
