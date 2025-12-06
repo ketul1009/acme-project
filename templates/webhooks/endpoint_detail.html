@@ -18,11 +18,51 @@
         </div>
     </div>
 
+    <!-- Embedded Product List for Testing -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-0">Test Data (Latest Products)</h5>
+        </div>
+        <div class="card-body">
+            <p class="small text-muted">Click "Update" to trigger a <code>product.updated</code> webhook event.</p>
+            <div class="table-responsive">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>SKU</th>
+                            <th>Name</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for product in products %}
+                        <tr>
+                            <td>{{ product.sku }}</td>
+                            <td>{{ product.name }}</td>
+                            <td>
+                                <button class="btn btn-sm btn-warning trigger-update"
+                                    data-id="{{ product.id }}">Update</button>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="3">No products found. <a href="{% url 'product_list' %}">Create one</a> to
+                                test.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
     <div class="d-flex justify-content-between align-items-center mb-3">
         <h3>Received Requests</h3>
-        <a href="" class="btn btn-sm btn-outline-primary">Refresh</a>
+        <span class="badge bg-success">Live Updates Active</span>
     </div>
-    <div class="accordion" id="requestsAccordion">
+
+    <div class="accordion" id="requestsAccordion" hx-ext="sse" sse-connect="{% url 'webhook_stream' endpoint.token %}"
+        sse-swap="message" hx-swap="afterbegin">
         {% for request in endpoint.requests.all %}
         <div class="accordion-item">
             <h2 class="accordion-header" id="heading{{ request.id }}">
@@ -46,11 +86,17 @@
             </div>
         </div>
         {% empty %}
-        <div class="alert alert-info">No requests received yet. Waiting for incoming webhooks...</div>
+        <div class="alert alert-info" id="no-requests-msg">No requests received yet. Waiting for incoming webhooks...
+        </div>
         {% endfor %}
     </div>
 </div>
 
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://unpkg.com/htmx.org@1.9.10"></script>
+<script src="https://unpkg.com/htmx.org@1.9.10/dist/ext/sse.js"></script>
 <script>
     function copyUrl() {
         var copyText = document.getElementById("testUrl");
@@ -59,5 +105,42 @@
         navigator.clipboard.writeText(copyText.value);
         alert("Copied the URL: " + copyText.value);
     }
+
+    $(document).ready(function () {
+        $('.trigger-update').click(function () {
+            var btn = $(this);
+            var id = btn.data('id');
+            btn.prop('disabled', true).text('Sending...');
+
+            // Send a dummy update to trigger webhook
+            $.ajax({
+                url: "/products/" + id + "/update/",
+                type: 'POST',
+                data: JSON.stringify({ description: 'Updated via Webhook Tester at ' + new Date().toISOString() }),
+                contentType: 'application/json',
+                headers: { 'X-CSRFToken': '{{ csrf_token }}' },
+                success: function () {
+                    btn.text('Sent!').addClass('btn-success').removeClass('btn-warning');
+                    setTimeout(function () {
+                        btn.prop('disabled', false).text('Update').addClass('btn-warning').removeClass('btn-success');
+                    }, 2000);
+                },
+                error: function (xhr) {
+                    if (xhr.status === 404) {
+                        alert('Product not found. The list might be stale. Reloading...');
+                        location.reload();
+                    } else {
+                        alert('Failed to trigger update.');
+                        btn.prop('disabled', false).text('Update');
+                    }
+                }
+            });
+        });
+
+        // Listen for new items added by HTMX/SSE
+        document.body.addEventListener('htmx:sseMessage', function (evt) {
+            $('#no-requests-msg').hide();
+        });
+    });
 </script>
 {% endblock %}

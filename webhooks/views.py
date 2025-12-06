@@ -43,9 +43,15 @@ class WebhookDeleteView(LoginRequiredMixin, DeleteView):
     def get_queryset(self):
         return Webhook.objects.filter(user=self.request.user)
 
+from products.models import Product
+
 class WebhookEndpointCreateView(LoginRequiredMixin, View):
     def post(self, request):
-        endpoint = WebhookEndpoint.objects.create(user=request.user)
+        # Check if user already has an endpoint
+        endpoint = WebhookEndpoint.objects.filter(user=request.user).order_by('-created_at').first()
+        if not endpoint:
+            endpoint = WebhookEndpoint.objects.create(user=request.user)
+            
         return JsonResponse({'url': request.build_absolute_uri(reverse('webhook_endpoint_detail', args=[endpoint.token]))})
 
 class WebhookEndpointDetailView(LoginRequiredMixin, DetailView):
@@ -58,7 +64,13 @@ class WebhookEndpointDetailView(LoginRequiredMixin, DetailView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['test_url'] = self.request.build_absolute_uri(reverse('webhook_receiver', args=[self.object.token]))
+        # Add latest 3 products for testing
+        context['products'] = Product.objects.filter(user=self.request.user).order_by('-updated_at')[:3]
         return context
+
+from django.http import StreamingHttpResponse
+import redis
+from django.conf import settings
 
 @method_decorator(csrf_exempt, name='dispatch')
 class WebhookReceiverView(View):
@@ -75,7 +87,7 @@ class WebhookReceiverView(View):
         except:
             body = '[Binary Data]'
             
-        WebhookRequest.objects.create(
+        webhook_request = WebhookRequest.objects.create(
             endpoint=endpoint,
             headers=headers,
             body=body,
@@ -83,4 +95,63 @@ class WebhookReceiverView(View):
             query_params=request.GET.dict()
         )
         logger.info("Webhook request saved successfully.")
+
+        # Publish to Redis
+        try:
+            r = redis.from_url(settings.REDIS_URL)
+            # Create HTML fragment matching the Accordion structure
+            import json
+            headers_pretty = json.dumps(webhook_request.headers, indent=2)
+            query_pretty = json.dumps(webhook_request.query_params, indent=2)
+            
+            html = f"""
+            <div class="accordion-item">
+                <h2 class="accordion-header" id="heading{webhook_request.id}">
+                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
+                        data-bs-target="#collapse{webhook_request.id}">
+                        <span class="badge bg-primary me-2">{webhook_request.method}</span>
+                        {webhook_request.created_at.strftime('%Y-%m-%d %H:%M:%S')}
+                    </button>
+                </h2>
+                <div id="collapse{webhook_request.id}" class="accordion-collapse collapse" data-bs-parent="#requestsAccordion">
+                    <div class="accordion-body">
+                        <h5>Headers</h5>
+                        <pre class="bg-light p-2 rounded"><code>{headers_pretty}</code></pre>
+
+                        <h5>Query Params</h5>
+                        <pre class="bg-light p-2 rounded"><code>{query_pretty}</code></pre>
+
+                        <h5>Body</h5>
+                        <pre class="bg-light p-2 rounded"><code>{webhook_request.body}</code></pre>
+                    </div>
+                </div>
+            </div>
+            """
+            
+            # SSE requires data to be single line or each line prefixed with data:
+            # We'll just remove newlines for simplicity
+            html = html.replace('\n', '').strip()
+            
+            r.publish(f'webhook_stream_{token}', html)
+        except Exception as e:
+            logger.error(f"Failed to publish to Redis: {e}")
+
         return HttpResponse('OK')
+
+class WebhookStreamView(LoginRequiredMixin, View):
+    def get(self, request, token):
+        print(f"DEBUG: Stream connected for token {token}")
+        def event_stream():
+            r = redis.from_url(settings.REDIS_URL)
+            pubsub = r.pubsub()
+            pubsub.subscribe(f'webhook_stream_{token}')
+            
+            for message in pubsub.listen():
+                if message['type'] == 'message':
+                    data = message['data'].decode('utf-8')
+                    yield f"data: {data}\n\n"
+                    
+        response = StreamingHttpResponse(event_stream(), content_type='text/event-stream')
+        response['Cache-Control'] = 'no-cache'
+        response['X-Accel-Buffering'] = 'no'  # Disable buffering in Nginx/Fly
+        return response
